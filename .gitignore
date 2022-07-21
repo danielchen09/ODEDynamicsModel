@@ -1,2 +1,5 @@
 unimals_100/
 __pycache__/
+data/
+saved_models/
+.vscode/

@@ -32,9 +32,10 @@ class UnimalEnvSampler:
 
 
 class UnimalEnv(gym.Env):
-    def __init__(self, xml_path):
+    def __init__(self, xml_path, padding=True):
         super().__init__()
         self.xml_path = xml_path
+        self.padding = padding
 
         self.physics = Physics.from_xml_path(xml_path)
         self.env_metadata = get_unimal_metadata(xml_path)
@@ -52,7 +53,9 @@ class UnimalEnv(gym.Env):
         self.joint_names = get_names(self.physics, 'jnt', lambda x: 'limb' in x)
 
         # obs space = n_limbs x (limb_obs + 2 * joint_obs)
-        sample_obs, sample_mask = self.get_obs()
+        sample_obs = self.get_obs()
+        if self.padding:
+            sample_obs, sample_mask = sample_obs
         self.observation_shape = sample_obs.shape
         self.observation_space = Dict({
             'obs': Box(
@@ -81,7 +84,13 @@ class UnimalEnv(gym.Env):
     def render(self):
         return self.physics.render(camera_id=0)
     
-    def get_obs(self, action=None):
+    def get_simple_obs(self):
+        return np.hstack([
+            self.physics.data.qpos.copy(),
+            self.physics.data.qvel.copy()
+        ])
+
+    def get_obs(self):
         def select_obs(obs):
             obs_arr = []
             for obs_name in config.env.SELECT_OBS:
@@ -90,7 +99,7 @@ class UnimalEnv(gym.Env):
             return np.hstack(obs_arr)
 
         body_obs = select_obs(self.get_body_obs())
-        joint_obs = select_obs(self.get_joint_obs(action=action))
+        joint_obs = select_obs(self.get_joint_obs())
         joint_obs_size = joint_obs.shape[-1]
 
         joint_mask = self.get_joint_mask()
@@ -99,9 +108,12 @@ class UnimalEnv(gym.Env):
         obs[joint_mask] = joint_obs
         obs = obs.reshape(self.n_body, joint_obs_size * 2)
         obs = np.hstack((body_obs, obs))
+        obs = obs[self.body_order]
+        if not self.padding:
+            return obs
         padding = np.zeros((config.model.MAX_SEQ_LEN - obs.shape[0], obs.shape[-1]))
         mask = np.array([False] * obs.shape[0] + [True] * padding.shape[0])
-        obs = np.vstack([obs[self.body_order], padding])
+        obs = np.vstack([obs, padding])
         return obs, mask
 
     
@@ -141,16 +153,13 @@ class UnimalEnv(gym.Env):
 
         return obs
 
-    def get_joint_obs(self, action=None):
-        if action is None:
-            action = np.zeros((self.env_metadata['dof'], 1))
-
+    def get_joint_obs(self):
         obs = {}
 
         # joint dynamic data
         qpos = self.physics.data.qpos[7:, None].copy()
         jnt_range = self.physics.model.jnt_range[1:].copy()
-        qpos = (qpos - jnt_range[:, 0]) / (jnt_range[:, 1] - jnt_range[:, 0])
+        qpos = (qpos - jnt_range[:, 0:1]) / (jnt_range[:, 1:2] - jnt_range[:, 0:1])
         obs['jnt_qpos'] = qpos
         obs['jnt_qvel'] = self.physics.data.qvel[6:, None].copy()
 
@@ -178,3 +187,11 @@ class UnimalEnv(gym.Env):
             *opt.o_solref,
             *opt.o_solimp
         ]])
+
+
+if __name__ == '__main__':
+    env_6_name = '../unimals_100/train/xml/vt-1409-9-14-02-22-02-11.xml'
+    env_10_name = '../unimals_100/train/xml/mvt-5506-15-3-17-08-19-25.xml'
+    env = UnimalEnv(env_6_name, padding=False)
+    state = env.get_simple_obs()
+    env.physics.set_state(state)

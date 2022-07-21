@@ -17,9 +17,9 @@ def name2id(physics, obj_type, name):
     obj_type = getattr(mujoco.mjtObj, f'mjOBJ_{obj_type.upper()}')
     return mujoco.mj_name2id(physics.model._model, obj_type, name)
 
-def get_idxs(physics, obj_type):
-    def filter_fn(name):
-        return any(substr in name for substr in ['torso', 'limb'])
+def get_idxs(physics, obj_type, filter_fn=None):
+    if filter_fn is None:
+        filter_fn = lambda name: any(substr in name for substr in ['torso', 'limb'])
     names = get_names(physics, obj_type, filter_fn=filter_fn)
     return [name2id(physics, obj_type, name) for name in names]
 

@@ -21,7 +21,6 @@ class TransformerDynamicsModel(nn.Module):
         obs = torch.cat([])
 
 
-
 class PositionalEncoding(nn.Module):
     def __init__(self, input_dim, batch_first=False):
         super().__init__()
