@@ -36,24 +36,23 @@ class LatentODEExperiment(BaseExperiment):
 
         obs, actions = dataset_obj.get_dataset()[:args.n] # obs, action [b, t, d]
 
-        actions = torch.cat([actions.clone()[:, 1:, :], torch.zeros(actions.shape[0], 1, actions.shape[-1])], dim=1)
-        dataset = torch.cat([actions, obs.clone()], dim=-1)
+        dataset = torch.cat([actions.clone(), obs.clone()], dim=-1)
         action_dim = actions.shape[-1]
         dataset = dataset.to(device)
 
         def basic_collate_fn(batch, time_steps, args=args, device=device, data_type='train'):
             batch = torch.stack(batch)
             data_dict = {
-                'data': batch[:, :-1, :],
+                'data': batch[:, :, :action_dim],
                 'time_steps': time_steps.unsqueeze(0)
             }
 
             data_dict = utils.split_and_subsample_batch(data_dict, args, data_type = data_type)
-            data_dict['data_to_predict'] = batch[:, 1:, action_dim:]
+            data_dict['data_to_predict'] = batch[:, :, action_dim:]
             return data_dict
 
 
-        n_tp_data = dataset[:].shape[1] - 1
+        n_tp_data = dataset[:].shape[1]
 
         # Time steps that are used later on for exrapolation
         time_steps = torch.arange(start=0, end=n_tp_data, step=1).float().to(device)
@@ -82,7 +81,7 @@ class LatentODEExperiment(BaseExperiment):
         train_y, val_y, test_y = utils.split_train_val_test(dataset)
 
         n_samples = len(dataset)
-        input_dim = actions.shape[-1] + obs.shape[-1]
+        input_dim = actions.shape[-1]
         output_dim = obs.shape[-1]
 
         dltrain = DataLoader(train_y, batch_size=args.batch_size, shuffle=True,
