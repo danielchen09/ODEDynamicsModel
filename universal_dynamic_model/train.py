@@ -91,6 +91,9 @@ class LatentODEExperiment(BaseExperiment):
             collate_fn=lambda batch: basic_collate_fn(batch, time_steps, data_type='test'))
         dltest = DataLoader(test_y, batch_size=args.batch_size, shuffle=False,
             collate_fn=lambda batch: basic_collate_fn(batch, time_steps, data_type='test'))
+        
+        # test_data = next(iter(dltrain))
+        # breakpoint()
         return input_dim, output_dim, dltrain, dlval, dltest
 
     def training_step(self, batch):

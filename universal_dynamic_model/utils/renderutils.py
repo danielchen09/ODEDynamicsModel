@@ -2,6 +2,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import animation
 import numpy as np
+from PIL import Image
+
+
+def generate_gif(frames, name='test.gif'):
+    imgs = [Image.fromarray(frame) for frame in frames]
+    imgs[0].save(name, save_all=True, append_images=imgs[1:], duration=1000//30, loop=0)
 
 
 def generate_video(frames, name='test.mp4'):
