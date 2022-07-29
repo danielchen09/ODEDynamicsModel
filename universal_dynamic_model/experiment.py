@@ -7,6 +7,7 @@ from tqdm import tqdm
 import nfe.experiments.latent_ode.lib.utils as utils
 
 from utils import *
+from plotter import Plotter
 
 
 class Experiment:
@@ -18,9 +19,18 @@ class Experiment:
                  lr_dacay=0.5):
         self.patience = patience
 
+        self.plotter = Plotter()
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
         obs, actions = dataset_obj.get_dataset()
+
+        # normalize obs
+        self.jnt_range = dataset_obj.env.physics.model.jnt_range[3:]
+        self.qpos_dim = dataset_obj.env.physics.data.qpos.shape[0]
+        obs[:, :, 3:self.qpos_dim] -= self.jnt_range[:, 0]
+        obs[:, :, 3:self.qpos_dim] /= self.jnt_range[:, 1] - self.jnt_range[:, 0]
+        # breakpoint()
+
         action_dim = actions.shape[-1]
         actions = torch.cat([actions.clone()[:, 1:, :], torch.zeros(actions.shape[0], 1, actions.shape[-1])], dim=1)
         dataset = torch.cat([actions, obs.clone()], dim=-1)
@@ -66,14 +76,18 @@ class Experiment:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
                 self.optim.step()
 
-                self.logger.info(f'[epoch={epoch+1:04d}|iter={iteration+1:04d}] train_loss={train_loss:.5f} waiting={waiting}')
+                print(f'[epoch={epoch+1:04d}|iter={iteration+1:04d}] train_loss={train_loss:.5f} waiting={waiting}')
+                self.plotter.log_loss('train_loss', train_loss.item())
                 iteration += 1
+                self.plotter.step()
 
             # validation
             self.model.eval()
             val_loss = self.val()
+            self.plotter.log_loss('val_loss', val_loss.item())
 
             if val_loss < best_loss:
+                print(f'best validation loss achieved at epoch {epoch + 1}: {val_loss}')
                 best_loss = val_loss
                 torch.save(self.model.state_dict(), 'saved_models/best_model.pt')
                 waiting = 0
@@ -112,10 +126,23 @@ class Experiment:
         pred_y = self.model(batch_dict['s'], batch_dict['a'], batch_dict['t'])
 
         pred_y = pred_y.detach().cpu().numpy()[0]
+
+        #inv normalize
+        pred_y[:, 3:self.qpos_dim] *= self.jnt_range[:, 1] - self.jnt_range[:, 0]
+        pred_y[:, 3:self.qpos_dim] += self.jnt_range[:, 0]
+
+
         actual_y = batch_dict['y'].detach().cpu().numpy()[0]
+
+        actual_y[:, 3:self.qpos_dim] *= self.jnt_range[:, 1] - self.jnt_range[:, 0]
+        actual_y[:, 3:self.qpos_dim] += self.jnt_range[:, 0]
 
         frames_actual = []
         env.reset()
+
+        pred_y[:, :3] = env.physics.data.qpos[:3]
+        actual_y[:, :3] = env.physics.data.qpos[:3]
+
         with physics.reset_context():
             for t in tqdm(range(actual_y.shape[0]), 'generating actual'):
                 physics.set_state(actual_y[t, :])

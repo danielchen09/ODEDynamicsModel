@@ -36,17 +36,22 @@ class LinearEncoder(nn.Module):
 
 class ODERNN(nn.Module):
     def __init__(self, 
-                 input_dim, 
+                 state_dim,
+                 action_dim, 
                  hidden_dim, 
                  num_layers,
                  flow_layers,
                  time_net,
                  time_hidden_dim,
-                 flow_model='gru'):
+                 flow_model='gru',
+                 mode='truth'):
         super().__init__()
 
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.mode = mode # auto, truth, s0
 
         if flow_model == 'gru':
             self.diffeq_solver = GRUFlow(
@@ -63,26 +68,44 @@ class ODERNN(nn.Module):
                 time_net,
                 time_hidden_dim
             )
-        self.gru = nn.GRU(input_dim, hidden_dim, num_layers, batch_first=True)
-    
-    def forward(self, x, t, h=None):
+        self.gru = nn.GRU(state_dim + action_dim, hidden_dim, num_layers, batch_first=True)
+        self.decoder = nn.Linear(hidden_dim, state_dim)
+
+    def forward(self, s, a, t, h=None):
         # x: [B, T0:Tn-1, input_dim]
         # t: [B, T1:Tn]
         # h: [B, num_layers, hidden_dim]
 
-        if h is None:
-            h = torch.zeros(x.shape[0], self.num_layers, self.hidden_dim)
-        h.to(x)
-        hiddens = torch.zeros(*x.shape[:-1], self.hidden_dim).to(x)
+        n_batch = s.shape[0]
+        n_ts = s.shape[1]
+        device = s.device
 
+        if h is None:
+            h = torch.zeros(n_batch, self.num_layers, self.hidden_dim)
+        h.to(device)
+        hiddens = torch.zeros(n_batch, n_ts, self.hidden_dim).to(device)
+        outputs = torch.zeros(n_batch, n_ts, self.state_dim).to(device)
+
+        s0 = s[:, 0, None]
+        last_output = s0
         for i in range(t.shape[1]):
             h = self.diffeq_solver(h, t[:, i:i+1, None])
-            hiddens[:,i,None] = h
+            hiddens[:, i, None] = h
 
-            _, h = self.gru(x[:,i,None], h.transpose(0, 1))
+            if self.mode == 'auto':
+                gru_in = torch.cat([last_output, a[:, i, None]], dim=-1)
+            elif self.mode == 'truth':
+                gru_in = torch.cat([s[:, i, None], a[:, i, None]], dim=-1)
+            elif self.mode == 's0':
+                gru_in = torch.cat([s0, a[:, i, None]], dim=-1)
+
+            _, h = self.gru(gru_in, h.transpose(0, 1))
             h = h.transpose(0, 1)
+            o = self.decoder(h)
+            last_output = o
+            outputs[:, i, None] = o
 
-        return hiddens
+        return outputs, hiddens
 
 
 class FlowModel(nn.Module):
@@ -94,7 +117,8 @@ class FlowModel(nn.Module):
                  time_net,
                  time_hidden_dim,
                  flow_model='gru',
-                 action_emb_dim=-1):
+                 action_emb_dim=-1,
+                 mode='auto'):
         super().__init__()
 
         self.state_dim = state_dim
@@ -109,21 +133,21 @@ class FlowModel(nn.Module):
         self.encoder = nn.Linear(state_dim, latent_dim)
 
         # ode part
-        self.odernn = ODERNN(action_emb_dim + state_dim, latent_dim, 1, flow_layers, time_net, time_hidden_dim, flow_model=flow_model)
-        self.decoder = nn.Linear(latent_dim, state_dim)
+        self.odernn = ODERNN(state_dim, action_emb_dim, latent_dim, 1, flow_layers, time_net, time_hidden_dim, flow_model=flow_model, mode=mode)
+        # self.decoder = nn.Linear(latent_dim, state_dim)
 
     # [B, T0:Tn-1, S+A] -> [B, T1:Tn, S]
     def forward(self, s, a, t):
-        s0 = s[:, 0:1, :]
+        s0 = s[:, 0, None]
         h0 = self.encoder(s0)
         if self.embed_action:
             a = self.action_encoder(a)
-        hiddens = self.odernn(torch.cat([a, s0.repeat(1, a.shape[1], 1)], dim=-1), t, h0)
-        return self.decoder(hiddens)
+        outputs, hiddens = self.odernn(s, a, t, h0)
+        return outputs
     
 if __name__ == '__main__':
     s = torch.randn(1000, 100, 17)
     a = torch.randn(1000, 100, 17)
     t = torch.randn(1000, 100)
-    model = FlowModel(s.shape[-1], a.shape[-1], 100, 2, 'TimeLinear', 100)
+    model = FlowModel(s.shape[-1], a.shape[-1], 256, 2, 'TimeTanh', 256)
     print(model(s, a, t).shape)

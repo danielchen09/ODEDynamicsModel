@@ -6,6 +6,7 @@ import os
 import numpy as np
 from tqdm import tqdm
 from dm_control import suite
+import argparse
 
 from dataset import HopperDataset
 from env import UnimalEnv
@@ -14,7 +15,7 @@ from utils import *
 from experiment import Experiment
 
 class HopperExperiment(Experiment):
-    def __init__(self, runs=1000):
+    def __init__(self, runs=1000, mode='s0'):
         self.patience = 10
         dataset_obj = HopperDataset(n_runs=runs)
         obs, actions = dataset_obj.get_dataset()
@@ -22,6 +23,15 @@ class HopperExperiment(Experiment):
         super().__init__(dataset_obj, model)
 
 if __name__ == '__main__':
-    experiment = HopperExperiment(5000)
-    experiment.train()
-    experiment.finish(save='results/flow.gif')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--save', type=str, default='results/test.gif')
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
+    parser.add_argument('--model_mode', type=str, default='auto', choices=['auto', 's0', 'truth'])
+
+    args = parser.parse_args()
+    print(f'save={args.save}')
+
+    experiment = HopperExperiment(5000, mode=args.model_mode)
+    if (args.mode == 'train'):
+        experiment.train()
+    experiment.finish(save=args.save)
